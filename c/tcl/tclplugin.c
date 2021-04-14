@@ -166,7 +166,7 @@ static char *InternalProcName(int value)
     return result;
 }
 
-static int SourceInternalProc(int id, const char *args, const char *source)
+static int SourceInternalProc(int id, char *args, char *source)
 {
     Tcl_DString ds;
     int result;
@@ -237,9 +237,8 @@ static char *StrDup(const char *string, int *length)
         return NULL;
 
     *length = strlen(string);
-    result = Tcl_Alloc(*length + 1);
-    strncpy_s(result, sizeof(result), string, *length);
-    result[*length] = 0;
+    result = Tcl_Alloc((*length) + 1);
+    strncpy(result, string, (size_t) (*length) + 1L);
 
     return result;
 }

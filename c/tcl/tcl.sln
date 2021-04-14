@@ -1,14 +1,22 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio 2012
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.30709.132
+MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "tcl", "tcl.vcxproj", "{A0C600B2-6E28-419A-8173-14DFF1533628}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Win32 = Debug|Win32
+		Debug|x64 = Debug|x64
 		Release|Win32 = Release|Win32
 		Release|x64 = Release|x64
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A0C600B2-6E28-419A-8173-14DFF1533628}.Debug|Win32.ActiveCfg = Debug|Win32
+		{A0C600B2-6E28-419A-8173-14DFF1533628}.Debug|Win32.Build.0 = Debug|Win32
+		{A0C600B2-6E28-419A-8173-14DFF1533628}.Debug|x64.ActiveCfg = Debug|x64
+		{A0C600B2-6E28-419A-8173-14DFF1533628}.Debug|x64.Build.0 = Debug|x64
 		{A0C600B2-6E28-419A-8173-14DFF1533628}.Release|Win32.ActiveCfg = Release|Win32
 		{A0C600B2-6E28-419A-8173-14DFF1533628}.Release|Win32.Build.0 = Release|Win32
 		{A0C600B2-6E28-419A-8173-14DFF1533628}.Release|x64.ActiveCfg = Release|x64
@@ -16,5 +24,8 @@ Global
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {8B9D408D-7E0A-4271-9316-3BAE3130295B}
 	EndGlobalSection
 EndGlobal

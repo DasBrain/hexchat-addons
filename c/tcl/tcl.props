@@ -6,12 +6,12 @@
 
 		<!-- SPECIFY YOUR DEPENDENCY DIRECTORIES HERE -->
 
-		<YourTclPath>c:\mozilla-build\tcl-8.5</YourTclPath>
+		<YourTclPath>c:\tcl</YourTclPath>
 
 		<!-- YOU SHOULDN'T TOUCH ANYTHING BELOW -->
 
-		<TclPath>$(YourTclPath)\$(PlatformName)</TclPath>
-        <TclLib>tcl85</TclLib>
+		<TclPath>$(YourTclPath)</TclPath>
+        <TclLib>tcl86t</TclLib>
         <TclOutput>hctcl</TclOutput>
 	</PropertyGroup>
 

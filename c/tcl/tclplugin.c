@@ -73,7 +73,7 @@ static Tcl_HashTable cmdTablePtr;
 static Tcl_HashTable aliasTablePtr;
 
 static int nextprocid = 0x1000;
-#define PROCPREFIX "__xctcl_"
+#define PROCPREFIX "::__xctcl_"
 
 static char unknown[] = {
 "rename unknown iunknown\n"
@@ -154,11 +154,6 @@ static void NiceErrorInfo ()
     Tcl_Eval(interp, "::__xctcl_errorInfo");
 }
 
-static void Tcl_MyDStringAppend(Tcl_DString * ds, char *string)
-{
-    Tcl_DStringAppend(ds, string, strlen(string));
-}
-
 static char *InternalProcName(int value)
 {
     static char result[32];
@@ -172,13 +167,13 @@ static int SourceInternalProc(int id, char *args, char *source)
     int result;
     Tcl_DStringInit(&ds);
 
-    Tcl_MyDStringAppend(&ds, "proc ");
-    Tcl_MyDStringAppend(&ds, InternalProcName(id));
-    Tcl_MyDStringAppend(&ds, " { ");
-    Tcl_MyDStringAppend(&ds, args);
-    Tcl_MyDStringAppend(&ds, " } {\n");
-    Tcl_MyDStringAppend(&ds, source);
-    Tcl_MyDStringAppend(&ds, "\n}\n\n");
+    Tcl_DStringAppend(&ds, "proc ", -1);
+    Tcl_DStringAppend(&ds, InternalProcName(id), -1);
+    Tcl_DStringAppend(&ds, " { ", -1);
+    Tcl_DStringAppend(&ds, args, -1);
+    Tcl_DStringAppend(&ds, " } {\n", -1);
+    Tcl_DStringAppend(&ds, source, -1);
+    Tcl_DStringAppend(&ds, "\n}\n\n", -1);
 
     result = Tcl_Eval(interp, ds.string);
 
@@ -196,7 +191,7 @@ static int EvalInternalProc(const char *procname, int ct, ...)
 
     Tcl_DStringInit(&ds);
 
-    Tcl_MyDStringAppend(&ds, procname);
+    Tcl_DStringAppend(&ds, procname, -1);
 
     if (ct) {
         va_start(ap, ct);
@@ -204,7 +199,7 @@ static int EvalInternalProc(const char *procname, int ct, ...)
             if ((buf = va_arg(ap, char *)) != NULL)
                  Tcl_DStringAppendElement(&ds, buf);
             else
-                Tcl_MyDStringAppend(&ds, " \"\"");
+                Tcl_DStringAppend(&ds, " \"\"", -1);
         }
         va_end(ap);
     }
@@ -219,14 +214,7 @@ static int EvalInternalProc(const char *procname, int ct, ...)
 
 static void DeleteInternalProc(const char *proc)
 {
-    Tcl_DString ds;
-
-    Tcl_DStringInit(&ds);
-    Tcl_MyDStringAppend(&ds, "rename ");
-    Tcl_MyDStringAppend(&ds, proc);
-    Tcl_MyDStringAppend(&ds, " {}");
-    Tcl_Eval(interp, ds.string);
-    Tcl_DStringFree(&ds);
+    Tcl_DeleteCommand(interp, proc);
 }
 
 static char *StrDup(const char *string, int *length)
@@ -236,58 +224,46 @@ static char *StrDup(const char *string, int *length)
     if (string == NULL)
         return NULL;
 
-    *length = strlen(string);
+    *length = (int) strlen(string);
     result = Tcl_Alloc((*length) + 1);
     strncpy(result, string, (size_t) (*length) + 1L);
 
     return result;
 }
 
-static char *myitoa(long value)
+static hexchat_context *objtoctx(Tcl_Obj *objPtr)
 {
-    static char result[32];
-    sprintf(result, "%ld", value);
-    return result;
-}
+    Tcl_WideInt result;
 
-static hexchat_context *atoctx(const char *nptr)
-{
-    int isnum = 1;
-    int x = 0;
-
-    if (!nptr)
+    if (!objPtr)
         return NULL;
 
-    while (isnum && nptr[x]) {
-        if (!isdigit(nptr[x++]))
-            isnum--;
-    }
-
-    if (isnum && x)
-        return (hexchat_context *) atol(nptr);
+    if (Tcl_GetWideIntFromObj(NULL, objPtr, &result) == TCL_OK)
+        return (hexchat_context *) (void *) result;
     else
         return NULL;
 }
 
-static hexchat_context *xchat_smart_context(const char *arg1, const char *arg2)
+static hexchat_context *xchat_smart_context(Tcl_Obj *oarg1, Tcl_Obj *arg2)
 {
-    const char *server, *s, *n;
+    const char *server, *s, *n, *arg1;
     hexchat_context *result = NULL;
     hexchat_context *ctx = NULL;
     hexchat_context *actx = NULL;
     hexchat_list *list;
 
-    if (arg1 == NULL)
+    if (oarg1 == NULL)
         return hexchat_get_context(ph);;
 
-    if (arg1 && arg2) {
-        result = hexchat_find_context(ph, arg1, arg2);
+    if (oarg1 && arg2) {
+        result = hexchat_find_context(ph, Tcl_GetString(oarg1), Tcl_GetString(arg2));
         if (result == NULL)
-            result = hexchat_find_context(ph, arg2, arg1);
+            result = hexchat_find_context(ph, Tcl_GetString(arg2), Tcl_GetString(oarg1));
         return result;
     } else {
 
-        actx = atoctx(arg1);
+        actx = objtoctx(oarg1);
+        arg1 = Tcl_GetString(oarg1);
 
         server = hexchat_get_info(ph, "server");
 
@@ -355,7 +331,7 @@ static void queue_nexttimer()
     }
 }
 
-static int insert_timer(int seconds, int count, const char *script)
+static int insert_timer(int seconds, int count, Tcl_Obj *script)
 {
     int x;
     int dummy;
@@ -371,7 +347,7 @@ static int insert_timer(int seconds, int count, const char *script)
 
     for (x = 1; x < MAX_TIMERS; x++) {
         if (timers[x].timerid == 0) {
-            if (SourceInternalProc(id, "", script) == TCL_ERROR) {
+            if (SourceInternalProc(id, "", Tcl_GetString(script)) == TCL_ERROR) {
                 hexchat_printf(ph, "\0039TCL plugin\003\tERROR (timer %d) ", timers[x].timerid);
                 NiceErrorInfo ();
                 return (-1);
@@ -540,7 +516,7 @@ static int Server_raw_line(char *word[], char *word_eol[], void *userdata)
                     continue;
 
                 origctx = hexchat_get_context(ph);
-                if (EvalInternalProc(proc_argv[1], 7, src, dest, cmd, rest, word_eol[1], proc_argv[0], myitoa(private)) == TCL_ERROR) {
+                if (EvalInternalProc(proc_argv[1], 7, src, dest, cmd, rest, word_eol[1], proc_argv[0], private ? "1" : 0) == TCL_ERROR) {
                     hexchat_printf(ph, "\0039TCL plugin\003\tERROR (on %s %s) ", cmd, proc_argv[0]);
                     NiceErrorInfo ();
                 }
@@ -588,7 +564,7 @@ static int Print_Hook(char *word[], void *userdata)
     complete[complete_level].word = word;
 	complete[complete_level].word_eol = word;
 
-    if ((entry = Tcl_FindHashEntry(&cmdTablePtr, xc[(int) userdata].event)) != NULL) {
+    if ((entry = Tcl_FindHashEntry(&cmdTablePtr, xc[(int)(intptr_t) userdata].event)) != NULL) {
 
         procList = Tcl_GetHashValue(entry);
 
@@ -603,21 +579,21 @@ static int Print_Hook(char *word[], void *userdata)
 
                 Tcl_DStringInit(&ds);
 
-                if ((int) userdata == CHAT) {
-                    Tcl_DStringAppend(&ds, word[3], strlen(word[3]));
+                if ((intptr_t) userdata == CHAT) {
+                    Tcl_DStringAppend(&ds, word[3], -1);
                     Tcl_DStringAppend(&ds, "!*@", 3);
-                    Tcl_DStringAppend(&ds, word[1], strlen(word[1]));
-                    if (EvalInternalProc(proc_argv[1], 7, ds.string, word[2], xc[(int) userdata].event, word[4], "", proc_argv[0], "0") == TCL_ERROR) {
-                        hexchat_printf(ph, "\0039TCL plugin\003\tERROR (on %s %s) ", xc[(int) userdata].event, proc_argv[0]);
+                    Tcl_DStringAppend(&ds, word[1], -1);
+                    if (EvalInternalProc(proc_argv[1], 7, ds.string, word[2], xc[(intptr_t) userdata].event, word[4], "", proc_argv[0], "0") == TCL_ERROR) {
+                        hexchat_printf(ph, "\0039TCL plugin\003\tERROR (on %s %s) ", xc[(intptr_t) userdata].event, proc_argv[0]);
                         NiceErrorInfo ();
                     }
                 } else {
-                    if (xc[(int) userdata].argc > 0) {
-                        for (x = 0; x <= xc[(int) userdata].argc; x++)
+                    if (xc[(intptr_t) userdata].argc > 0) {
+                        for (x = 0; x <= xc[(intptr_t) userdata].argc; x++)
                             Tcl_DStringAppendElement(&ds, word[x]);
                     }
-                    if (EvalInternalProc(proc_argv[1], 7, "", "", xc[(int) userdata].event, "", ds.string, proc_argv[0], "0") == TCL_ERROR) {
-                        hexchat_printf(ph, "\0039Tcl plugin\003\tERROR (on %s %s) ", xc[(int) userdata].event, proc_argv[0]);
+                    if (EvalInternalProc(proc_argv[1], 7, "", "", xc[(intptr_t) userdata].event, "", ds.string, proc_argv[0], "0") == TCL_ERROR) {
+                        hexchat_printf(ph, "\0039Tcl plugin\003\tERROR (on %s %s) ", xc[(intptr_t) userdata].event, proc_argv[0]);
                         NiceErrorInfo ();
                     }
                 }
@@ -642,14 +618,14 @@ static int Print_Hook(char *word[], void *userdata)
 }
 
 
-static int tcl_timerexists(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_timerexists(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     int x;
     int timerid;
 
     BADARGS(2, 2, " schedid");
 
-    if (Tcl_GetInt(irp, argv[1], &timerid) != TCL_OK) {
+    if (Tcl_GetIntFromObj(irp, argv[1], &timerid) != TCL_OK) {
         Tcl_AppendResult(irp, "Invalid timer id", NULL);
         return TCL_ERROR;
     }
@@ -668,14 +644,14 @@ static int tcl_timerexists(ClientData cd, Tcl_Interp * irp, int argc, const char
     return TCL_OK;
 }
 
-static int tcl_killtimer(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_killtimer(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     int x;
     int timerid;
 
     BADARGS(2, 2, " timerid");
 
-    if (Tcl_GetInt(irp, argv[1], &timerid) != TCL_OK) {
+    if (Tcl_GetIntFromObj(irp, argv[1], &timerid) != TCL_OK) {
         Tcl_AppendResult(irp, "Invalid timer id", NULL);
         return TCL_ERROR;
     }
@@ -699,52 +675,50 @@ static int tcl_killtimer(ClientData cd, Tcl_Interp * irp, int argc, const char *
     return TCL_OK;
 }
 
-static int tcl_timers(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_timers(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     int x;
-    Tcl_DString ds;
+    Tcl_Obj * result;
     time_t now;
 
     BADARGS(1, 1, "");
 
     now = time(NULL);
 
-    Tcl_DStringInit(&ds);
+    result = Tcl_NewListObj(0, NULL);
 
     for (x = 1; x < MAX_TIMERS; x++) {
         if (timers[x].timerid) {
-            Tcl_DStringStartSublist(&ds);
-            Tcl_DStringAppendElement(&ds, myitoa((long)timers[x].timerid));
-            Tcl_DStringAppendElement(&ds, myitoa((long)timers[x].timestamp - now));
-            Tcl_DStringAppendElement(&ds, timers[x].procPtr);
-            Tcl_DStringAppendElement(&ds, myitoa((long)timers[x].seconds));
-            Tcl_DStringAppendElement(&ds, myitoa((long)timers[x].count));
-            Tcl_DStringEndSublist(&ds);
+            Tcl_Obj * sublist = Tcl_NewListObj(0, NULL);
+            Tcl_ListObjAppendElement(irp, sublist, Tcl_NewIntObj(timers[x].timerid));
+            Tcl_ListObjAppendElement(irp, sublist, Tcl_NewWideIntObj((Tcl_WideInt)timers[x].timestamp - now));
+            Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj(timers[x].procPtr, -1));
+            Tcl_ListObjAppendElement(irp, sublist, Tcl_NewIntObj(timers[x].seconds));
+            Tcl_ListObjAppendElement(irp, sublist, Tcl_NewIntObj(timers[x].count));
+            Tcl_ListObjAppendElement(irp, result, sublist);
         }
     }
 
-    Tcl_AppendResult(interp, ds.string, NULL);
-    Tcl_DStringFree(&ds);
+    Tcl_SetObjResult(irp, result);
 
     return TCL_OK;
 }
 
-static int tcl_timer(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_timer(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     int seconds;
     int timerid;
     int repeat = 0;
     int count = 0;
     int first = 1;
-    char reply[32];
 
     BADARGS(3, 6, " ?-repeat? ?-count times? seconds {script | procname ?args?}");
 
     while (argc--) {
-        if (strcasecmp(argv[first], "-repeat") == 0) {
+        if (strcasecmp(Tcl_GetString(argv[first]), "-repeat") == 0) {
             repeat++;
-        } else if (strcasecmp(argv[first], "-count") == 0) {
-            if (Tcl_GetInt(irp, argv[++first], &count) != TCL_OK)
+        } else if (strcasecmp(Tcl_GetString(argv[first]), "-count") == 0) {
+            if (Tcl_GetIntFromObj(irp, argv[++first], &count) != TCL_OK)
                 return TCL_ERROR;
         } else {
             break;
@@ -758,7 +732,7 @@ static int tcl_timer(ClientData cd, Tcl_Interp * irp, int argc, const char *argv
     if (!count)
       count = 1;
 
-    if (Tcl_GetInt(irp, argv[first++], &seconds) != TCL_OK)
+    if (Tcl_GetIntFromObj(irp, argv[first++], &seconds) != TCL_OK)
         return TCL_ERROR;
 
     if ((timerid = insert_timer(seconds, count, argv[first++])) == -1) {
@@ -766,16 +740,14 @@ static int tcl_timer(ClientData cd, Tcl_Interp * irp, int argc, const char *argv
         return TCL_ERROR;
     }
 
-    sprintf(reply, "%d", timerid);
-
-    Tcl_AppendResult(irp, reply, NULL);
+    Tcl_SetObjResult(irp, Tcl_NewIntObj(timerid));
 
     queue_nexttimer();
 
     return TCL_OK;
 }
 
-static int tcl_on(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_on(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     int newentry;
     char *procList;
@@ -793,13 +765,13 @@ static int tcl_on(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
 
     id = (nextprocid++ % INT_MAX) + 1;
 
-    if (SourceInternalProc(id, "_src _dest _cmd _rest _raw _label _private", argv[3]) == TCL_ERROR) {
-        hexchat_printf(ph, "\0039Tcl plugin\003\tERROR (on %s:%s) ", argv[1], argv[2]);
+    if (SourceInternalProc(id, "_src _dest _cmd _rest _raw _label _private", Tcl_GetString(argv[3])) == TCL_ERROR) {
+        hexchat_printf(ph, "\0039Tcl plugin\003\tERROR (on %s:%s) ", Tcl_GetString(argv[1]), Tcl_GetString(argv[2]));
         NiceErrorInfo ();
         return TCL_OK;
     }
 
-    token = StrDup(argv[1], &dummy);
+    token = StrDup(Tcl_GetString(argv[1]), &dummy);
     Tcl_UtfToUpper(token);
 
     Tcl_DStringInit(&ds);
@@ -811,7 +783,7 @@ static int tcl_on(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
             for (count = 0; count < list_argc; count++) {
                 if (Tcl_SplitList(interp, list_argv[count], &proc_argc, &proc_argv) != TCL_OK)
                     continue;
-                if (strcmp(proc_argv[0], argv[2])) {
+                if (strcmp(proc_argv[0], Tcl_GetString(argv[2]))) {
                     Tcl_DStringStartSublist(&ds);
                     Tcl_DStringAppendElement(&ds, proc_argv[0]);
                     Tcl_DStringAppendElement(&ds, proc_argv[1]);
@@ -827,7 +799,7 @@ static int tcl_on(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
     }
 
     Tcl_DStringStartSublist(&ds);
-    Tcl_DStringAppendElement(&ds, argv[2]);
+    Tcl_DStringAppendElement(&ds, Tcl_GetString(argv[2]));
     Tcl_DStringAppendElement(&ds, InternalProcName(id));
     Tcl_DStringEndSublist(&ds);
 
@@ -852,7 +824,7 @@ static int tcl_on(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
     return TCL_OK;
 }
 
-static int tcl_off(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_off(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     char *procList;
     Tcl_HashEntry *entry;
@@ -866,7 +838,7 @@ static int tcl_off(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[]
 
     BADARGS(2, 3, " token ?label?");
 
-    token = StrDup(argv[1], &dummy);
+    token = StrDup(Tcl_GetString(argv[1]), &dummy);
     Tcl_UtfToUpper(token);
 
     Tcl_DStringInit(&ds);
@@ -880,7 +852,7 @@ static int tcl_off(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[]
                 for (count = 0; count < list_argc; count++) {
                     if (Tcl_SplitList(interp, list_argv[count], &proc_argc, &proc_argv) != TCL_OK)
                         continue;
-                    if (strcmp(proc_argv[0], argv[2])) {
+                    if (strcmp(proc_argv[0], Tcl_GetString(argv[2]))) {
                         Tcl_DStringStartSublist(&ds);
                         Tcl_DStringAppendElement(&ds, proc_argv[0]);
                         Tcl_DStringAppendElement(&ds, proc_argv[1]);
@@ -923,7 +895,7 @@ static int tcl_off(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[]
     return TCL_OK;
 }
 
-static int tcl_alias(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_alias(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     int newentry;
     alias *aliasPtr;
@@ -935,18 +907,18 @@ static int tcl_alias(ClientData cd, Tcl_Interp * irp, int argc, const char *argv
 
     BADARGS(3, 4, " name ?help? {script | procname ?args?}");
 
-    string = StrDup(argv[1], &dummy);
+    string = StrDup(Tcl_GetString(argv[1]), &dummy);
     Tcl_UtfToUpper(string);
 
-    if (strlen(argv[argc - 1])) {
+    if (Tcl_GetCharLength(argv[argc - 1])) {
 
         if (argc == 4)
-            help = argv[2];
+            help = Tcl_GetString(argv[2]);
 
         id = (nextprocid++ % INT_MAX) + 1;
 
-        if (SourceInternalProc(id, "_cmd _rest", argv[argc - 1]) == TCL_ERROR) {
-            hexchat_printf(ph, "\0039Tcl plugin\003\tERROR (alias %s) ", argv[1]);
+        if (SourceInternalProc(id, "_cmd _rest", Tcl_GetString(argv[argc - 1])) == TCL_ERROR) {
+            hexchat_printf(ph, "\0039Tcl plugin\003\tERROR (alias %s) ", Tcl_GetString(argv[1]));
             NiceErrorInfo ();
             return TCL_OK;
         }
@@ -986,19 +958,20 @@ static int tcl_alias(ClientData cd, Tcl_Interp * irp, int argc, const char *argv
     return TCL_OK;
 }
 
-static int tcl_complete(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_complete(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     BADARGS(1, 2, " ?EAT_NONE|EAT_XCHAT|EAT_PLUGIN|EAT_ALL?");
 
     if (argc == 2) {
-        if (Tcl_GetInt(irp, argv[1], &complete[complete_level].result) != TCL_OK) {
-            if (strcasecmp("EAT_NONE", argv[1]) == 0)
+        if (Tcl_GetIntFromObj(NULL, argv[1], &complete[complete_level].result) != TCL_OK) {
+            const char* arg = Tcl_GetString(argv[1]);
+            if (strcasecmp("EAT_NONE", arg) == 0)
                 complete[complete_level].result = HEXCHAT_EAT_NONE;
-            else if (strcasecmp("EAT_XCHAT", argv[1]) == 0)
+            else if (strcasecmp("EAT_XCHAT", arg) == 0)
                 complete[complete_level].result = HEXCHAT_EAT_HEXCHAT;
-            else if (strcasecmp("EAT_PLUGIN", argv[1]) == 0)
+            else if (strcasecmp("EAT_PLUGIN", arg) == 0)
                 complete[complete_level].result = HEXCHAT_EAT_PLUGIN;
-            else if (strcasecmp("EAT_ALL", argv[1]) == 0)
+            else if (strcasecmp("EAT_ALL", arg) == 0)
                 complete[complete_level].result = HEXCHAT_EAT_ALL;
             else
                 BADARGS(1, 2, " ?EAT_NONE|EAT_XCHAT|EAT_PLUGIN|EAT_ALL?");
@@ -1009,7 +982,7 @@ static int tcl_complete(ClientData cd, Tcl_Interp * irp, int argc, const char *a
     return TCL_RETURN;
 }
 
-static int tcl_command(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_command(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     hexchat_context *origctx;
     hexchat_context *ctx = NULL;
@@ -1034,7 +1007,7 @@ static int tcl_command(ClientData cd, Tcl_Interp * irp, int argc, const char *ar
 
     CHECKCTX(ctx);
 
-    string = argv[argc - 1];
+    string = Tcl_GetString(argv[argc - 1]);
 
     if (string[0] == '/')
         string++;
@@ -1046,7 +1019,7 @@ static int tcl_command(ClientData cd, Tcl_Interp * irp, int argc, const char *ar
     return TCL_OK;
 }
 
-static int tcl_raw(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_raw(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     hexchat_context *origctx;
     hexchat_context *ctx = NULL;
@@ -1071,7 +1044,7 @@ static int tcl_raw(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[]
 
     CHECKCTX(ctx);
 
-    string = argv[argc - 1];
+    string = Tcl_GetString(argv[argc - 1]);
 
     hexchat_set_context(ph, ctx);
     hexchat_commandf(ph, "RAW %s", string);
@@ -1081,20 +1054,20 @@ static int tcl_raw(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[]
 }
 
 
-static int tcl_prefs(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_prefs(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     int i;
     const char *str;
 
     BADARGS(2, 2, " name");
 
-    switch (hexchat_get_prefs (ph, argv[1], &str, &i)) {
+    switch (hexchat_get_prefs (ph, Tcl_GetString(argv[1]), &str, &i)) {
         case 1:
-            Tcl_AppendResult(irp, str, NULL);
+            Tcl_SetObjResult(irp, Tcl_NewStringObj(str, -1));
             break;
         case 2:
         case 3:
-            Tcl_AppendResult(irp, myitoa(i), NULL);
+            Tcl_SetObjResult(irp, Tcl_NewIntObj(i));
             break;
         default:
             Tcl_AppendResult(irp, NULL);
@@ -1103,9 +1076,9 @@ static int tcl_prefs(ClientData cd, Tcl_Interp * irp, int argc, const char *argv
     return TCL_OK;
 }
 
-static int tcl_info(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[], char *id)
+static int tcl_info(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[], char *id)
 {
-    char *result;
+    const char *result;
     int max_argc;
     hexchat_context *origctx, *ctx;
 
@@ -1126,29 +1099,34 @@ static int tcl_info(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[
     }
 
     if (id == NULL)
-      id = argv[argc-1];
+      id = Tcl_GetString(argv[argc-1]);
 
     if ((result = hexchat_get_info(ph, id)) == NULL)
         result = "";
 
-    Tcl_AppendResult(irp, result, NULL);
+    if (strcasecmp(id, "win_ptr")) {
+        Tcl_SetObjResult(irp, Tcl_NewWideIntObj((Tcl_WideInt)result));
+    }
+    else {
+        Tcl_AppendResult(irp, result, NULL);
+    }
 
     hexchat_set_context(ph, origctx);
 
     return TCL_OK;
 }
 
-static int tcl_me(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_me(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     return tcl_info(cd, irp, argc, argv, "nick");
 }
 
-static int tcl_getinfo(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_getinfo(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     return tcl_info(cd, irp, argc, argv, NULL);
 }
 
-static int tcl_getlist(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_getlist(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     hexchat_list *list = NULL;
     const char *name = NULL;
@@ -1158,27 +1136,25 @@ static int tcl_getlist(ClientData cd, Tcl_Interp * irp, int argc, const char *ar
     int iattr;
     int i;
     time_t t;
-    Tcl_DString ds;
     hexchat_context *origctx;
     hexchat_context *ctx = NULL;
 
     origctx = hexchat_get_context(ph);
 
     BADARGS(1, 2, " list");
-
-    Tcl_DStringInit(&ds);
+    Tcl_Obj* result = Tcl_NewListObj(0, NULL);
 
     fields = hexchat_list_fields(ph, "lists");
 
     if (argc == 1) {
         for (i = 0; fields[i] != NULL; i++) {
-            Tcl_DStringAppendElement(&ds, fields[i]);
+            Tcl_ListObjAppendElement(irp, result, Tcl_NewStringObj(fields[i], -1));            
         }
         goto done;
     }
 
     for (i = 0; fields[i] != NULL; i++) {
-        if (strcmp(fields[i], argv[1]) == 0) {
+        if (strcmp(fields[i], Tcl_GetString(argv[1])) == 0) {
             name = fields[i];
             break;
         }
@@ -1193,16 +1169,16 @@ static int tcl_getlist(ClientData cd, Tcl_Interp * irp, int argc, const char *ar
 
     fields = hexchat_list_fields(ph, name);
 
-    Tcl_DStringStartSublist(&ds);
+    Tcl_Obj* sublist = Tcl_NewListObj(0, NULL);
     for (i = 0; fields[i] != NULL; i++) {
         field = fields[i] + 1;
-        Tcl_DStringAppendElement(&ds, field);
+        Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj(field, -1));
     }
-    Tcl_DStringEndSublist(&ds);
+    Tcl_ListObjAppendElement(irp, result, sublist);
 
     while (hexchat_list_next(ph, list)) {
 
-        Tcl_DStringStartSublist(&ds);
+        sublist = Tcl_NewListObj(0, NULL);
 
         for (i = 0; fields[i] != NULL; i++) {
 
@@ -1211,31 +1187,27 @@ static int tcl_getlist(ClientData cd, Tcl_Interp * irp, int argc, const char *ar
             switch (fields[i][0]) {
             case 's':
                 sattr = hexchat_list_str(ph, list, (char *) field);
-                Tcl_DStringAppendElement(&ds, sattr);
+                Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj(sattr, -1));
                 break;
             case 'i':
                 iattr = hexchat_list_int(ph, list, (char *) field);
-                Tcl_DStringAppendElement(&ds, myitoa((long)iattr));
+                Tcl_ListObjAppendElement(irp, sublist, Tcl_NewIntObj(iattr));
                 break;
             case 't':
                 t = hexchat_list_time(ph, list, (char *) field);
-                Tcl_DStringAppendElement(&ds, myitoa((long)t));
+                Tcl_ListObjAppendElement(irp, sublist, Tcl_NewWideIntObj((Tcl_WideInt)t));
                 break;
             case 'p':
                 sattr = hexchat_list_str(ph, list, (char *) field);
-                if (strcmp(field, "context") == 0) {
-                    ctx = (hexchat_context *) sattr;
-                    Tcl_DStringAppendElement(&ds, myitoa((long)ctx));
-                } else
-                    Tcl_DStringAppendElement(&ds, "*");
+                Tcl_ListObjAppendElement(irp, sublist, Tcl_NewWideIntObj((Tcl_WideInt)sattr));
                 break;
             default:
-                Tcl_DStringAppendElement(&ds, "*");
+                Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj("*", -1));
                 break;
             }
         }
 
-        Tcl_DStringEndSublist(&ds);
+        Tcl_ListObjAppendElement(irp, result, sublist);
 
     }
 
@@ -1245,9 +1217,7 @@ static int tcl_getlist(ClientData cd, Tcl_Interp * irp, int argc, const char *ar
 
     hexchat_set_context(ph, origctx);
 
-    Tcl_AppendResult(irp, ds.string, NULL);
-
-    Tcl_DStringFree(&ds);
+    Tcl_SetObjResult(irp, result);
 
     return TCL_OK;
 }
@@ -1257,13 +1227,13 @@ static int tcl_getlist(ClientData cd, Tcl_Interp * irp, int argc, const char *ar
  * This is modified from the original internal "puts" command.  It redirects
  * stdout to the current context, while still allowing all normal puts features
  */
-
-static int tcl_xchat_puts(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+// TODO: REPLACE with an custom channel
+static int tcl_xchat_puts(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     Tcl_Channel chan;
-    const char *string;
+    Tcl_Obj *string;
     int newline;
-    const char *channelId = NULL;
+    Tcl_Obj *channelId = NULL;
     int result;
     int mode;
     int trap_stdout = 0;
@@ -1277,7 +1247,7 @@ static int tcl_xchat_puts(ClientData cd, Tcl_Interp * irp, int argc, const char 
         break;
 
     case 3:
-        if (strcmp(argv[1], "-nonewline") == 0) {
+        if (strcmp(Tcl_GetString(argv[1]), "-nonewline") == 0) {
             newline = 0;
             trap_stdout = 1;
         } else {
@@ -1288,12 +1258,12 @@ static int tcl_xchat_puts(ClientData cd, Tcl_Interp * irp, int argc, const char 
         break;
 
     case 4:
-        if (strcmp(argv[1], "-nonewline") == 0) {
+        if (strcmp(Tcl_GetString(argv[1]), "-nonewline") == 0) {
             channelId = argv[2];
             string = argv[3];
         } else {
-            if (strcmp(argv[3], "nonewline") != 0) {
-                Tcl_AppendResult(interp, "bad argument \"", argv[3], "\": should be \"nonewline\"", (char *) NULL);
+            if (strcmp(Tcl_GetString(argv[3]), "nonewline") != 0) {
+                Tcl_AppendResult(interp, "bad argument \"", Tcl_GetString(argv[3]), "\": should be \"nonewline\"", (char *) NULL);
                 return TCL_ERROR;
             }
             channelId = argv[1];
@@ -1307,27 +1277,27 @@ static int tcl_xchat_puts(ClientData cd, Tcl_Interp * irp, int argc, const char 
         return TCL_ERROR;
     }
 
-    if (!trap_stdout && (strcmp(channelId, "stdout") == 0))
+    if (!trap_stdout && (strcmp(Tcl_GetString(channelId), "stdout") == 0))
         trap_stdout = 1;
 
     if (trap_stdout) {
         if (newline)
-            hexchat_printf(ph, "%s\n", string);
+            hexchat_printf(ph, "%s\n", Tcl_GetString(string));
         else
-            hexchat_print(ph, string);
+            hexchat_print(ph, Tcl_GetString(string));
         return TCL_OK;
     }
 
-    chan = Tcl_GetChannel(interp, channelId, &mode);
+    chan = Tcl_GetChannel(interp, Tcl_GetString(channelId), &mode);
     if (chan == (Tcl_Channel) NULL) {
         return TCL_ERROR;
     }
     if ((mode & TCL_WRITABLE) == 0) {
-        Tcl_AppendResult(interp, "channel \"", channelId, "\" wasn't opened for writing", (char *) NULL);
+        Tcl_AppendResult(interp, "channel \"", Tcl_GetString(channelId), "\" wasn't opened for writing", (char *) NULL);
         return TCL_ERROR;
     }
 
-    result = Tcl_Write(chan, string, strlen(string));
+    result = Tcl_WriteObj(chan, string);
     if (result < 0) {
         goto error;
     }
@@ -1345,7 +1315,7 @@ static int tcl_xchat_puts(ClientData cd, Tcl_Interp * irp, int argc, const char 
     return TCL_ERROR;
 }
 
-static int tcl_print(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_print(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     hexchat_context *origctx;
     hexchat_context *ctx = NULL;
@@ -1370,7 +1340,7 @@ static int tcl_print(ClientData cd, Tcl_Interp * irp, int argc, const char *argv
 
     CHECKCTX(ctx);
 
-    string = argv[argc - 1];
+    string = Tcl_GetString(argv[argc - 1]);
 
     hexchat_set_context(ph, ctx);
     hexchat_print(ph, string);
@@ -1379,7 +1349,7 @@ static int tcl_print(ClientData cd, Tcl_Interp * irp, int argc, const char *argv
     return TCL_OK;
 }
 
-static int tcl_setcontext(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_setcontext(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     hexchat_context *ctx = NULL;
 
@@ -1394,7 +1364,7 @@ static int tcl_setcontext(ClientData cd, Tcl_Interp * irp, int argc, const char 
     return TCL_OK;
 }
 
-static int tcl_findcontext(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_findcontext(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     hexchat_context *ctx = NULL;
 
@@ -1415,12 +1385,12 @@ static int tcl_findcontext(ClientData cd, Tcl_Interp * irp, int argc, const char
 
     CHECKCTX(ctx);
 
-    Tcl_AppendResult(irp, myitoa((long)ctx), NULL);
+    Tcl_SetObjResult(irp, Tcl_NewWideIntObj((Tcl_WideInt)ctx));
 
     return TCL_OK;
 }
 
-static int tcl_getcontext(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_getcontext(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     hexchat_context *ctx = NULL;
 
@@ -1428,16 +1398,16 @@ static int tcl_getcontext(ClientData cd, Tcl_Interp * irp, int argc, const char 
 
     ctx = hexchat_get_context(ph);
 
-    Tcl_AppendResult(irp, myitoa((long)ctx), NULL);
+    Tcl_SetObjResult(irp, Tcl_NewWideIntObj((Tcl_WideInt)ctx));
 
     return TCL_OK;
 }
 
-static int tcl_channels(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_channels(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     const char *server, *channel;
     hexchat_list *list;
-    Tcl_DString ds;
+    Tcl_Obj* result;
     hexchat_context *origctx;
     hexchat_context *ctx;
 
@@ -1453,7 +1423,7 @@ static int tcl_channels(ClientData cd, Tcl_Interp * irp, int argc, const char *a
 
     server = (char *) hexchat_get_info(ph, "server");
 
-    Tcl_DStringInit(&ds);
+    result = Tcl_NewListObj(0, NULL);
 
     list = hexchat_list_get(ph, "channels");
 
@@ -1464,29 +1434,27 @@ static int tcl_channels(ClientData cd, Tcl_Interp * irp, int argc, const char *a
             if (strcasecmp(server, hexchat_list_str(ph, list, "server")) != 0)
                 continue;
             channel = hexchat_list_str(ph, list, "channel");
-            Tcl_DStringAppendElement(&ds, channel);
+            Tcl_ListObjAppendElement(irp, result, Tcl_NewStringObj(channel, -1));
         }
         hexchat_list_free(ph, list);
     }
 
-    Tcl_AppendResult(irp, ds.string, NULL);
-
-    Tcl_DStringFree(&ds);
+    Tcl_SetObjResult(irp, result);
 
     hexchat_set_context(ph, origctx);
 
     return TCL_OK;
 }
 
-static int tcl_servers(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_servers(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     const char *server;
     hexchat_list *list;
-    Tcl_DString ds;
+    Tcl_Obj* result;
 
     BADARGS(1, 1, "");
 
-    Tcl_DStringInit(&ds);
+    result = Tcl_NewListObj(0, NULL);
 
     list = hexchat_list_get(ph, "channels");
 
@@ -1494,24 +1462,22 @@ static int tcl_servers(ClientData cd, Tcl_Interp * irp, int argc, const char *ar
         while (hexchat_list_next(ph, list)) {
             if (hexchat_list_int(ph, list, "type") == 1) {
                 server = hexchat_list_str(ph, list, "server");
-                Tcl_DStringAppendElement(&ds, server);
+                Tcl_ListObjAppendElement(irp, result, Tcl_NewStringObj(server, -1));
             }
         }
         hexchat_list_free(ph, list);
     }
 
-    Tcl_AppendResult(irp, ds.string, NULL);
-
-    Tcl_DStringFree(&ds);
+    Tcl_SetObjResult(irp, result);
 
     return TCL_OK;
 }
 
-static int tcl_queries(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_queries(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     const char *server, *channel;
     hexchat_list *list;
-    Tcl_DString ds;
+    Tcl_Obj* result;
     hexchat_context *origctx;
     hexchat_context *ctx;
 
@@ -1527,7 +1493,7 @@ static int tcl_queries(ClientData cd, Tcl_Interp * irp, int argc, const char *ar
 
     server = (char *) hexchat_get_info(ph, "server");
 
-    Tcl_DStringInit(&ds);
+    result = Tcl_NewListObj(0, NULL);
 
     list = hexchat_list_get(ph, "channels");
 
@@ -1538,25 +1504,23 @@ static int tcl_queries(ClientData cd, Tcl_Interp * irp, int argc, const char *ar
             if (strcasecmp(server, hexchat_list_str(ph, list, "server")) != 0)
                 continue;
             channel = hexchat_list_str(ph, list, "channel");
-            Tcl_DStringAppendElement(&ds, channel);
+            Tcl_ListObjAppendElement(irp, result, Tcl_NewStringObj(channel, -1));
         }
         hexchat_list_free(ph, list);
     }
 
-    Tcl_AppendResult(irp, ds.string, NULL);
-
-    Tcl_DStringFree(&ds);
+    Tcl_SetObjResult(irp, result);
 
     hexchat_set_context(ph, origctx);
 
     return TCL_OK;
 }
 
-static int tcl_users(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_users(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     hexchat_context *origctx, *ctx = NULL;
     hexchat_list *list;
-    Tcl_DString ds;
+    Tcl_Obj* result;
 
     BADARGS(1, 3, " ?server|network|context? ?channel?");
 
@@ -1579,96 +1543,93 @@ static int tcl_users(ClientData cd, Tcl_Interp * irp, int argc, const char *argv
 
     hexchat_set_context(ph, ctx);
 
-    Tcl_DStringInit(&ds);
+    result = Tcl_NewListObj(0, NULL);
 
     list = hexchat_list_get(ph, "users");
 
     if (list != NULL) {
 
-        Tcl_DStringStartSublist(&ds);
-        Tcl_DStringAppendElement(&ds, "nick");
-        Tcl_DStringAppendElement(&ds, "host");
-        Tcl_DStringAppendElement(&ds, "prefix");
-        Tcl_DStringAppendElement(&ds, "away");
-        Tcl_DStringAppendElement(&ds, "lasttalk");
-        Tcl_DStringAppendElement(&ds, "selected");
-        Tcl_DStringEndSublist(&ds);
+        Tcl_Obj* sublist = Tcl_NewListObj(6, NULL);
+        
+        Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj("nick", -1));
+        Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj("host", -1));
+        Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj("prefix", -1));
+        Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj("away", -1));
+        Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj("lasttalk", -1));
+        Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj("selected", -1));
+        Tcl_ListObjAppendElement(irp, result, sublist);
 
         while (hexchat_list_next(ph, list)) {
-            Tcl_DStringStartSublist(&ds);
-            Tcl_DStringAppendElement(&ds, (const char *) hexchat_list_str(ph, list, "nick"));
-            Tcl_DStringAppendElement(&ds, (const char *) hexchat_list_str(ph, list, "host"));
-            Tcl_DStringAppendElement(&ds, (const char *) hexchat_list_str(ph, list, "prefix"));
-            Tcl_DStringAppendElement(&ds, myitoa((long)hexchat_list_int(ph, list, "away")));
-            Tcl_DStringAppendElement(&ds, myitoa((long)hexchat_list_time(ph, list, "lasttalk")));
-            Tcl_DStringAppendElement(&ds, myitoa((long)hexchat_list_int(ph, list, "selected")));
-            Tcl_DStringEndSublist(&ds);
+            sublist = Tcl_NewListObj(6, NULL);
+            Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj(hexchat_list_str(ph, list, "nick"), -1));
+            Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj(hexchat_list_str(ph, list, "host"), -1));
+            Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj(hexchat_list_str(ph, list, "prefix"), -1));
+            Tcl_ListObjAppendElement(irp, sublist, Tcl_NewIntObj(hexchat_list_int(ph, list, "away")));
+            Tcl_ListObjAppendElement(irp, sublist, Tcl_NewWideIntObj(hexchat_list_time(ph, list, "lasttalk")));
+            Tcl_ListObjAppendElement(irp, sublist, Tcl_NewIntObj(hexchat_list_int(ph, list, "selected")));
+            Tcl_ListObjAppendElement(irp, result, sublist);
         }
 
         hexchat_list_free(ph, list);
     }
 
-    Tcl_AppendResult(irp, ds.string, NULL);
-
-    Tcl_DStringFree(&ds);
+    Tcl_SetObjResult(irp, result);
 
     hexchat_set_context(ph, origctx);
 
     return TCL_OK;
 }
 
-static int tcl_notifylist(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_notifylist(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     hexchat_list *list;
-    Tcl_DString ds;
+    Tcl_Obj* result;
 
     BADARGS(1, 1, "");
 
-    Tcl_DStringInit(&ds);
+    result = Tcl_NewListObj(0, NULL);
 
     list = hexchat_list_get(ph, "notify");
 
     if (list != NULL) {
 
-        Tcl_DStringStartSublist(&ds);
-        Tcl_DStringAppendElement(&ds, "nick");
-        Tcl_DStringAppendElement(&ds, "flags");
-        Tcl_DStringAppendElement(&ds, "on");
-        Tcl_DStringAppendElement(&ds, "off");
-        Tcl_DStringAppendElement(&ds, "seen");
-        Tcl_DStringAppendElement(&ds, "networks");
-        Tcl_DStringEndSublist(&ds);
+        Tcl_Obj* sublist = Tcl_NewListObj(6, NULL);
+        Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj("nick", -1));
+        Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj("flags", -1));
+        Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj("on", -1));
+        Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj("off", -1));
+        Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj("seen", -1));
+        Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj("networks", -1));
+        Tcl_ListObjAppendElement(irp, result, sublist);
 
         while (hexchat_list_next(ph, list)) {
-            Tcl_DStringStartSublist(&ds);
-            Tcl_DStringAppendElement(&ds, (const char *) hexchat_list_str(ph, list, "nick"));
-            Tcl_DStringAppendElement(&ds, (const char *) hexchat_list_str(ph, list, "flags"));
-            Tcl_DStringAppendElement(&ds, myitoa((long)hexchat_list_time(ph, list, "on")));
-            Tcl_DStringAppendElement(&ds, myitoa((long)hexchat_list_time(ph, list, "off")));
-            Tcl_DStringAppendElement(&ds, myitoa((long)hexchat_list_time(ph, list, "seen")));
-            Tcl_DStringAppendElement(&ds, (const char *) hexchat_list_str(ph, list, "networks"));
-            Tcl_DStringEndSublist(&ds);
+            sublist = Tcl_NewListObj(6, NULL);
+            Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj(hexchat_list_str(ph, list, "nick"), -1));
+            Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj(hexchat_list_str(ph, list, "flags"), -1));
+            Tcl_ListObjAppendElement(irp, sublist, Tcl_NewWideIntObj(hexchat_list_time(ph, list, "on")));
+            Tcl_ListObjAppendElement(irp, sublist, Tcl_NewWideIntObj(hexchat_list_time(ph, list, "off")));
+            Tcl_ListObjAppendElement(irp, sublist, Tcl_NewWideIntObj(hexchat_list_time(ph, list, "seen")));
+            Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj(hexchat_list_str(ph, list, "networks"), -1));
+            Tcl_ListObjAppendElement(irp, result, sublist);
         }
 
         hexchat_list_free(ph, list);
 
     }
 
-    Tcl_AppendResult(irp, ds.string, NULL);
-
-    Tcl_DStringFree(&ds);
+    Tcl_SetObjResult(irp, result);
 
     return TCL_OK;
 }
 
-static int tcl_chats(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_chats(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     hexchat_list *list;
-    Tcl_DString ds;
+    Tcl_Obj* result;
 
     BADARGS(1, 1, "");
 
-    Tcl_DStringInit(&ds);
+    result = Tcl_NewListObj(0, NULL);
 
     list = hexchat_list_get(ph, "dcc");
 
@@ -1678,149 +1639,143 @@ static int tcl_chats(ClientData cd, Tcl_Interp * irp, int argc, const char *argv
             case 2:
             case 3:
                 if (hexchat_list_int(ph, list, "status") == 1)
-                    Tcl_DStringAppendElement(&ds, (const char *) hexchat_list_str(ph, list, "nick"));
+                    Tcl_ListObjAppendElement(irp, result, Tcl_NewStringObj(hexchat_list_str(ph, list, "nick"), -1));
                 break;
             }
         }
         hexchat_list_free(ph, list);
     }
 
-    Tcl_AppendResult(irp, ds.string, NULL);
-
-    Tcl_DStringFree(&ds);
+    Tcl_SetObjResult(irp, result);
 
     return TCL_OK;
 }
 
-static int tcl_ignores(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_ignores(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     hexchat_list *list;
-    Tcl_DString ds;
+    Tcl_Obj* result;
     int flags;
 
     BADARGS(1, 1, "");
 
-    Tcl_DStringInit(&ds);
+    result = Tcl_NewListObj(0, NULL);
 
     list = hexchat_list_get(ph, "ignore");
 
     if (list != NULL) {
 
         while (hexchat_list_next(ph, list)) {
-            Tcl_DStringStartSublist(&ds);
-            Tcl_DStringAppendElement(&ds, (const char *) hexchat_list_str(ph, list, "mask"));
-            Tcl_DStringStartSublist(&ds);
+            Tcl_Obj* sublist = Tcl_NewListObj(2, NULL);
+            Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj(hexchat_list_str(ph, list, "mask"), -1));
+            Tcl_Obj* ssub = Tcl_NewListObj(0, NULL);
             flags = hexchat_list_int(ph, list, "flags");
             if (flags & 1)
-                Tcl_DStringAppendElement(&ds, "PRIVMSG");
+                Tcl_ListObjAppendElement(irp, ssub, Tcl_NewStringObj("PRIVMSG", -1));
             if (flags & 2)
-                Tcl_DStringAppendElement(&ds, "NOTICE");
+                Tcl_ListObjAppendElement(irp, ssub, Tcl_NewStringObj("NOTICE", -1));
             if (flags & 4)
-                Tcl_DStringAppendElement(&ds, "CHANNEL");
+                Tcl_ListObjAppendElement(irp, ssub, Tcl_NewStringObj("CHANNEL", -1));
             if (flags & 8)
-                Tcl_DStringAppendElement(&ds, "CTCP");
+                Tcl_ListObjAppendElement(irp, ssub, Tcl_NewStringObj("CTCP", -1));
             if (flags & 16)
-                Tcl_DStringAppendElement(&ds, "INVITE");
+                Tcl_ListObjAppendElement(irp, ssub, Tcl_NewStringObj("INVITE", -1));
             if (flags & 32)
-                Tcl_DStringAppendElement(&ds, "UNIGNORE");
+                Tcl_ListObjAppendElement(irp, ssub, Tcl_NewStringObj("UNIGNORE", -1));
             if (flags & 64)
-                Tcl_DStringAppendElement(&ds, "NOSAVE");
-            Tcl_DStringEndSublist(&ds);
-            Tcl_DStringEndSublist(&ds);
+                Tcl_ListObjAppendElement(irp, ssub, Tcl_NewStringObj("NOSAVE", -1));
+            Tcl_ListObjAppendElement(irp, sublist, ssub);
+            Tcl_ListObjAppendElement(irp, result, sublist);
         }
         hexchat_list_free(ph, list);
     }
 
-    Tcl_AppendResult(irp, ds.string, NULL);
-
-    Tcl_DStringFree(&ds);
+    Tcl_SetObjResult(irp, result);
 
     return TCL_OK;
 }
 
-static int tcl_dcclist(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_dcclist(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     hexchat_list *list;
-    Tcl_DString ds;
+    Tcl_Obj* result;
     int dcctype;
 
     BADARGS(1, 1, "");
 
-    Tcl_DStringInit(&ds);
+    result = Tcl_NewListObj(0, NULL);
 
     list = hexchat_list_get(ph, "dcc");
 
     if (list != NULL) {
 
         while (hexchat_list_next(ph, list)) {
-            Tcl_DStringStartSublist(&ds);
+            Tcl_Obj* sublist = Tcl_NewListObj(10, NULL);
             dcctype = hexchat_list_int(ph, list, "type");
             switch (dcctype) {
             case 0:
-                Tcl_DStringAppendElement(&ds, "filesend");
+                Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj("filesend", -1));
                 break;
             case 1:
-                Tcl_DStringAppendElement(&ds, "filerecv");
+                Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj("filerecv", -1));
                 break;
             case 2:
-                Tcl_DStringAppendElement(&ds, "chatrecv");
+                Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj("chatrecv", -1));
                 break;
             case 3:
-                Tcl_DStringAppendElement(&ds, "chatsend");
+                Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj("chatsend", -1));
                 break;
             }
             switch (hexchat_list_int(ph, list, "status")) {
             case 0:
-                Tcl_DStringAppendElement(&ds, "queued");
+                Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj("queued", -1));
                 break;
             case 1:
-                Tcl_DStringAppendElement(&ds, "active");
+                Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj("active", -1));
                 break;
             case 2:
-                Tcl_DStringAppendElement(&ds, "failed");
+                Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj("failed", -1));
                 break;
             case 3:
-                Tcl_DStringAppendElement(&ds, "done");
+                Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj("done", -1));
                 break;
             case 4:
-                Tcl_DStringAppendElement(&ds, "connecting");
+                Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj("connecting", -1));
                 break;
             case 5:
-                Tcl_DStringAppendElement(&ds, "aborted");
+                Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj("aborted", -1));
                 break;
             }
 
-            Tcl_DStringAppendElement(&ds, (const char *) hexchat_list_str(ph, list, "nick"));
+            Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj(hexchat_list_str(ph, list, "nick"), -1));
 
             switch (dcctype) {
             case 0:
-                Tcl_DStringAppendElement(&ds, (const char *) hexchat_list_str(ph, list, "file"));
+                Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj(hexchat_list_str(ph, list, "file"), -1));
                 break;
             case 1:
-                Tcl_DStringAppendElement(&ds, (const char *) hexchat_list_str(ph, list, "destfile"));
+                Tcl_ListObjAppendElement(irp, sublist, Tcl_NewStringObj(hexchat_list_str(ph, list, "destfile"), -1));
                 break;
             }
 
-            Tcl_DStringAppendElement(&ds, myitoa((long)hexchat_list_int(ph, list, "size")));
-            Tcl_DStringAppendElement(&ds, myitoa((long)hexchat_list_int(ph, list, "resume")));
-            Tcl_DStringAppendElement(&ds, myitoa((long)hexchat_list_int(ph, list, "pos")));
-            Tcl_DStringAppendElement(&ds, myitoa((long)hexchat_list_int(ph, list, "cps")));
-            Tcl_DStringAppendElement(&ds, myitoa((long)hexchat_list_int(ph, list, "address32")));
-            Tcl_DStringAppendElement(&ds, myitoa((long)hexchat_list_int(ph, list, "port")));
-            Tcl_DStringEndSublist(&ds);
+            Tcl_ListObjAppendElement(irp, sublist, Tcl_NewIntObj(hexchat_list_int(ph, list, "size")));
+            Tcl_ListObjAppendElement(irp, sublist, Tcl_NewIntObj(hexchat_list_int(ph, list, "resume")));
+            Tcl_ListObjAppendElement(irp, sublist, Tcl_NewIntObj(hexchat_list_int(ph, list, "pos")));
+            Tcl_ListObjAppendElement(irp, sublist, Tcl_NewIntObj(hexchat_list_int(ph, list, "cps")));
+            Tcl_ListObjAppendElement(irp, sublist, Tcl_NewIntObj(hexchat_list_int(ph, list, "address32")));
+            Tcl_ListObjAppendElement(irp, sublist, Tcl_NewIntObj(hexchat_list_int(ph, list, "port")));
+            Tcl_ListObjAppendElement(irp, result, sublist);
         }
         hexchat_list_free(ph, list);
     }
 
-    Tcl_AppendResult(irp, ds.string, NULL);
-
-    Tcl_DStringFree(&ds);
+    Tcl_SetObjResult(irp, result);
 
     return TCL_OK;
 }
 
 
-static int tcl_strip(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_strip(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     char *new_text;
     int flags = 1 | 2;
@@ -1828,11 +1783,11 @@ static int tcl_strip(ClientData cd, Tcl_Interp * irp, int argc, const char *argv
     BADARGS(2, 3, " text ?flags?");
 
     if (argc == 3) {
-        if (Tcl_GetInt(irp, argv[2], &flags) != TCL_OK)
+        if (Tcl_GetIntFromObj(irp, argv[2], &flags) != TCL_OK)
             return TCL_ERROR;
     }
 
-    new_text = hexchat_strip(ph, argv[1], -1, flags);
+    new_text = hexchat_strip(ph, Tcl_GetString(argv[1]), -1, flags);
 
     if(new_text) {
         Tcl_AppendResult(irp, new_text, NULL);
@@ -1842,7 +1797,7 @@ static int tcl_strip(ClientData cd, Tcl_Interp * irp, int argc, const char *argv
     return TCL_OK;
 }
 
-static int tcl_topic(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_topic(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     hexchat_context *origctx, *ctx = NULL;
     BADARGS(1, 3, " ?server|network|context? ?channel?");
@@ -1871,20 +1826,20 @@ static int tcl_topic(ClientData cd, Tcl_Interp * irp, int argc, const char *argv
     return TCL_OK;
 }
 
-static int tcl_hexchat_nickcmp(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_hexchat_nickcmp(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     BADARGS(3, 3, " string1 string2");
-    Tcl_AppendResult(irp, myitoa((long)hexchat_nickcmp(ph, argv[1], argv[2])), NULL);
+    Tcl_SetObjResult(irp, Tcl_NewIntObj(hexchat_nickcmp(ph, Tcl_GetString(argv[1]), Tcl_GetString(argv[2]))));
     return TCL_OK;
 }
 
-static int tcl_word(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_word(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     int index;
 
     BADARGS(2, 2, " index");
 
-    if (Tcl_GetInt(irp, argv[1], &index) != TCL_OK)
+    if (Tcl_GetIntFromObj(irp, argv[1], &index) != TCL_OK)
         return TCL_ERROR;
 
     if (!index || (index > 31))
@@ -1895,13 +1850,13 @@ static int tcl_word(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[
     return TCL_OK;
 }
 
-static int tcl_word_eol(ClientData cd, Tcl_Interp * irp, int argc, const char *argv[])
+static int tcl_word_eol(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const argv[])
 {
     int index;
 
     BADARGS(2, 2, " index");
 
-    if (Tcl_GetInt(irp, argv[1], &index) != TCL_OK)
+    if (Tcl_GetIntFromObj(irp, argv[1], &index) != TCL_OK)
         return TCL_ERROR;
 
     if (!index || (index > 31))
@@ -1976,7 +1931,7 @@ static int Null_Command_Alias(char *word[], char *word_eol[], void *userdata)
     channel = hexchat_get_info(ph, "channel");
     Tcl_DStringInit(&ds);
     Tcl_DStringAppend(&ds, "@", 1);
-    Tcl_DStringAppend(&ds, channel, strlen(channel));
+    Tcl_DStringAppend(&ds, channel, -1);
     string = StrDup(ds.string, &dummy);
     Tcl_DStringFree(&ds);
 
@@ -2023,7 +1978,7 @@ static int Command_Source(char *word[], char *word_eol[], void *userdata)
     const char *hexchatdir;
     Tcl_DString ds;
     struct stat dummy;
-    int len;
+    size_t len;
     const char *errorInfo;
 
     if (!strlen(word_eol[2]))
@@ -2042,12 +1997,12 @@ static int Command_Source(char *word[], char *word_eol[], void *userdata)
         Tcl_DStringInit(&ds);
 
         if (stat(word_eol[2], &dummy) == 0) {
-            Tcl_DStringAppend(&ds, word_eol[2], strlen(word_eol[2]));
+            Tcl_DStringAppend(&ds, word_eol[2], -1);
         } else {
             if (!strchr(word_eol[2], '/')) {
-                Tcl_DStringAppend(&ds, hexchatdir, strlen(hexchatdir));
+                Tcl_DStringAppend(&ds, hexchatdir, -1);
                 Tcl_DStringAppend(&ds, "/addons/", 8);
-                Tcl_DStringAppend(&ds, word_eol[2], strlen(word_eol[2]));
+                Tcl_DStringAppend(&ds, word_eol[2], -1);
             }
         }
 
@@ -2100,38 +2055,38 @@ static void Tcl_Plugin_Init()
 
     nextprocid = 0x1000;
 
-    Tcl_CreateCommand(interp, "alias", tcl_alias, NULL, NULL);
-    Tcl_CreateCommand(interp, "channels", tcl_channels, NULL, NULL);
-    Tcl_CreateCommand(interp, "chats", tcl_chats, NULL, NULL);
-    Tcl_CreateCommand(interp, "command", tcl_command, NULL, NULL);
-    Tcl_CreateCommand(interp, "complete", tcl_complete, NULL, NULL);
-    Tcl_CreateCommand(interp, "dcclist", tcl_dcclist, NULL, NULL);
-    Tcl_CreateCommand(interp, "notifylist", tcl_notifylist, NULL, NULL);
-    Tcl_CreateCommand(interp, "findcontext", tcl_findcontext, NULL, NULL);
-    Tcl_CreateCommand(interp, "getcontext", tcl_getcontext, NULL, NULL);
-    Tcl_CreateCommand(interp, "getinfo", tcl_getinfo, NULL, NULL);
-    Tcl_CreateCommand(interp, "getlist", tcl_getlist, NULL, NULL);
-    Tcl_CreateCommand(interp, "ignores", tcl_ignores, NULL, NULL);
-    Tcl_CreateCommand(interp, "killtimer", tcl_killtimer, NULL, NULL);
-    Tcl_CreateCommand(interp, "me", tcl_me, NULL, NULL);
-    Tcl_CreateCommand(interp, "on", tcl_on, NULL, NULL);
-    Tcl_CreateCommand(interp, "off", tcl_off, NULL, NULL);
-    Tcl_CreateCommand(interp, "nickcmp", tcl_hexchat_nickcmp, NULL, NULL);
-    Tcl_CreateCommand(interp, "print", tcl_print, NULL, NULL);
-    Tcl_CreateCommand(interp, "prefs", tcl_prefs, NULL, NULL);
-    Tcl_CreateCommand(interp, "::puts", tcl_xchat_puts, NULL, NULL);
-    Tcl_CreateCommand(interp, "queries", tcl_queries, NULL, NULL);
-    Tcl_CreateCommand(interp, "raw", tcl_raw, NULL, NULL);
-    Tcl_CreateCommand(interp, "servers", tcl_servers, NULL, NULL);
-    Tcl_CreateCommand(interp, "setcontext", tcl_setcontext, NULL, NULL);
-    Tcl_CreateCommand(interp, "strip", tcl_strip, NULL, NULL);
-    Tcl_CreateCommand(interp, "timer", tcl_timer, NULL, NULL);
-    Tcl_CreateCommand(interp, "timerexists", tcl_timerexists, NULL, NULL);
-    Tcl_CreateCommand(interp, "timers", tcl_timers, NULL, NULL);
-    Tcl_CreateCommand(interp, "topic", tcl_topic, NULL, NULL);
-    Tcl_CreateCommand(interp, "users", tcl_users, NULL, NULL);
-    Tcl_CreateCommand(interp, "word", tcl_word, NULL, NULL);
-    Tcl_CreateCommand(interp, "word_eol", tcl_word_eol, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "alias", tcl_alias, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "channels", tcl_channels, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "chats", tcl_chats, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "command", tcl_command, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "complete", tcl_complete, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "dcclist", tcl_dcclist, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "notifylist", tcl_notifylist, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "findcontext", tcl_findcontext, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "getcontext", tcl_getcontext, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "getinfo", tcl_getinfo, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "getlist", tcl_getlist, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "ignores", tcl_ignores, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "killtimer", tcl_killtimer, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "me", tcl_me, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "on", tcl_on, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "off", tcl_off, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "nickcmp", tcl_hexchat_nickcmp, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "print", tcl_print, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "prefs", tcl_prefs, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "::puts", tcl_xchat_puts, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "queries", tcl_queries, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "raw", tcl_raw, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "servers", tcl_servers, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "setcontext", tcl_setcontext, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "strip", tcl_strip, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "timer", tcl_timer, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "timerexists", tcl_timerexists, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "timers", tcl_timers, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "topic", tcl_topic, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "users", tcl_users, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "word", tcl_word, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "word_eol", tcl_word_eol, NULL, NULL);
 
     Tcl_InitHashTable(&cmdTablePtr, TCL_STRING_KEYS);
     Tcl_InitHashTable(&aliasTablePtr, TCL_STRING_KEYS);

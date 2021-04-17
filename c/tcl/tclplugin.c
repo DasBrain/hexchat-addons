@@ -1104,7 +1104,7 @@ static int tcl_info(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const ar
     if ((result = hexchat_get_info(ph, id)) == NULL)
         result = "";
 
-    if (strcasecmp(id, "win_ptr")) {
+    if (strcasecmp(id, "win_ptr") == 0 || strcasecmp(id, "gtkwin_ptr") == 0) {
         Tcl_SetObjResult(irp, Tcl_NewWideIntObj((Tcl_WideInt)result));
     }
     else {

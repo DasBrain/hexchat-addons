@@ -34,7 +34,7 @@ proc keepnick:connected {} {
 }
 
 on XC_UCHANGENICK keepnick {
-	variable wantednicks
+	global wantednicks
 	set sid [serverid]
 	if {[dict exists $wantednicks $sid]} {
 		set newnick [lindex $_raw 2]
@@ -45,7 +45,7 @@ on XC_UCHANGENICK keepnick {
 }
 
 on QUIT keepnick {
-	variable wantednicks
+	global wantednicks
 	set sid [serverid]
 	if {[dict exists $wantednicks $sid]} {
 		set wanted [dict get $wantednicks $sid]
@@ -54,4 +54,9 @@ on QUIT keepnick {
 			command "NICK $wanted"
 		}
 	}
+}
+
+on XC_DISCON keepnick {
+	global wantednicks
+	dict unset wantednicks [serverid]
 }

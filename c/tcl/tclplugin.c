@@ -239,6 +239,7 @@ static int tcl_hook_command(ClientData cd, Tcl_Interp* irp, int argc, Tcl_Obj* c
     Tcl_Obj* command = argv[argc - 1];
     hexchat_hook* hook = hexchat_hook_command(ph, name, priority, CommandHook, help, command);
     RegisterHook(hook, command);
+    Tcl_SetObjResult(irp, Tcl_NewWideIntObj((intptr_t)hook));
     return TCL_OK;
 }
 
@@ -274,6 +275,7 @@ static int tcl_hook_print(ClientData cd, Tcl_Interp* irp, int argc, Tcl_Obj* con
 
     hexchat_hook* hook = hexchat_hook_print(ph, name, priority, PrintHook, command);
     RegisterHook(hook, command);
+    Tcl_SetObjResult(irp, Tcl_NewWideIntObj((intptr_t)hook));
     return TCL_OK;
 }
 
@@ -309,6 +311,7 @@ static int tcl_hook_server(ClientData cd, Tcl_Interp* irp, int argc, Tcl_Obj* co
 
     hexchat_hook* hook = hexchat_hook_server(ph, name, priority, ServerHook, command);
     RegisterHook(hook, command);
+    Tcl_SetObjResult(irp, Tcl_NewWideIntObj((intptr_t)hook));
     return TCL_OK;
 }
 
@@ -321,6 +324,7 @@ static int tcl_hook_timer(ClientData cd, Tcl_Interp* irp, int argc, Tcl_Obj* con
     Tcl_Obj* command = argv[2];
     hexchat_hook* hook = hexchat_hook_timer(ph, timeout, TimerHook, command);
     RegisterHook(hook, command);
+    Tcl_SetObjResult(irp, Tcl_NewWideIntObj((intptr_t)hook));
     return TCL_OK;
 }
 
@@ -525,7 +529,7 @@ static int tcl_setcontext(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *co
         }
     }
 
-    Tcl_SetResult(irp, "Invalid context", NULL);
+    Tcl_SetResult(irp, "Invalid context", TCL_STATIC);
     return TCL_ERROR;
 }
 
@@ -533,7 +537,7 @@ static int tcl_findcontext(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *c
 {
     hexchat_context *ctx = NULL;
 
-    BADARGS(1, 3, " ?server|network|context? ?channel?");
+    BADARGS(1, 3, " ?server|network? ?channel?");
 
     switch (argc) {
     case 1:
@@ -600,6 +604,94 @@ static int tcl_hexchat_nickcmp(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Ob
     return TCL_OK;
 }
 
+static int tcl_hexchat_pluginpref_get(ClientData cd, Tcl_Interp* irp, int argc, Tcl_Obj* const argv[]) {
+    BADARGS(2, 3, "?-int? name");
+    if (argc == 3) {
+        if (strcmp(Tcl_GetString(argv[1]), "-int") == 0) {
+            int result = hexchat_pluginpref_get_int(ph, Tcl_GetString(argv[2]));
+            Tcl_SetObjResult(irp, Tcl_NewIntObj(result));
+            return TCL_OK;
+        } else {
+            Tcl_WrongNumArgs(irp, 1, argv, "?-int? name");
+            return TCL_ERROR;
+        }
+    } else {
+        char buffer[512];
+        int result = hexchat_pluginpref_get_str(ph, Tcl_GetString(argv[1]), buffer);
+        if (result == 1) {
+            Tcl_SetObjResult(irp, Tcl_NewStringObj(buffer, -1));
+            return TCL_OK;
+        } else {
+            Tcl_SetResult(irp, "could not get plugin preference", TCL_STATIC);
+            return TCL_ERROR;
+        }
+    }
+}
+
+static int tcl_hexchat_pluginpref_set(ClientData cd, Tcl_Interp* irp, int argc, Tcl_Obj* const argv[]) {
+    BADARGS(3, 3, "name value");
+    int result = hexchat_pluginpref_set_str(ph, Tcl_GetString(argv[1]), Tcl_GetString(argv[2]));
+    if (result == 1) {
+        return TCL_OK;
+    } else {
+        Tcl_SetResult(irp, "could not set plugin preference", TCL_STATIC);
+        return TCL_ERROR;
+    }
+}
+
+static int tcl_hexchat_pluginpref_delete(ClientData cd, Tcl_Interp* irp, int argc, Tcl_Obj* const argv[]) {
+    BADARGS(2, 2, "name");
+    int result = hexchat_pluginpref_delete(ph, Tcl_GetString(argv[1]));
+    if (result == 1) {
+        return TCL_OK;
+    } else {
+        Tcl_SetResult(irp, "could not delete plugin preference", TCL_STATIC);
+        return TCL_ERROR;
+    }
+}
+
+static int tcl_hexchat_pluginpref_list(ClientData cd, Tcl_Interp* irp, int argc, Tcl_Obj* const argv[]) {
+    BADARGS(1, 1, "");
+    char buffer[4096];
+    int result = hexchat_pluginpref_list(ph, buffer);
+    if (result == 1) {
+        Tcl_SetObjResult(irp, Tcl_NewStringObj(buffer, -1));
+        return TCL_OK;
+    } else {
+        Tcl_SetResult(irp, "could not list the plugin preferences", TCL_STATIC);
+        return TCL_ERROR;
+    }
+}
+
+static int tcl_hexchat_emit_print_helper(Tcl_Interp* irp, int result) {
+    if (!result) {
+        Tcl_SetResult(interp, "Could not emit print", TCL_STATIC);
+        return TCL_ERROR;
+    } else {
+        return TCL_OK;
+    }
+}
+
+static int tcl_hexchat_emit_print(ClientData cd, Tcl_Interp* irp, int argc, Tcl_Obj* const argv[]) {
+    if (argc < 2) {
+        Tcl_WrongNumArgs(irp, 1, argv, "event ?args...?");
+        return TCL_ERROR;
+    }
+    switch (argc) {
+        case 2: return tcl_hexchat_emit_print_helper(irp, hexchat_emit_print(ph, Tcl_GetString(argv[1]), NULL));
+        case 3: return tcl_hexchat_emit_print_helper(irp, hexchat_emit_print(ph, Tcl_GetString(argv[1]), Tcl_GetString(argv[2]), NULL));
+        case 4: return tcl_hexchat_emit_print_helper(irp, hexchat_emit_print(ph, Tcl_GetString(argv[1]), Tcl_GetString(argv[2]), Tcl_GetString(argv[3]), NULL));
+        case 5: return tcl_hexchat_emit_print_helper(irp, hexchat_emit_print(ph, Tcl_GetString(argv[1]), Tcl_GetString(argv[2]), Tcl_GetString(argv[3]), Tcl_GetString(argv[4]), NULL));
+        case 6: return tcl_hexchat_emit_print_helper(irp, hexchat_emit_print(ph, Tcl_GetString(argv[1]), Tcl_GetString(argv[2]), Tcl_GetString(argv[3]), Tcl_GetString(argv[4]), Tcl_GetString(argv[5]), NULL));
+        case 7: return tcl_hexchat_emit_print_helper(irp, hexchat_emit_print(ph, Tcl_GetString(argv[1]), Tcl_GetString(argv[2]), Tcl_GetString(argv[3]), Tcl_GetString(argv[4]), Tcl_GetString(argv[5]), Tcl_GetString(argv[6]), NULL));
+        case 8: return tcl_hexchat_emit_print_helper(irp, hexchat_emit_print(ph, Tcl_GetString(argv[1]), Tcl_GetString(argv[2]), Tcl_GetString(argv[3]), Tcl_GetString(argv[4]), Tcl_GetString(argv[5]), Tcl_GetString(argv[6]), Tcl_GetString(argv[7]), NULL));
+        default: Tcl_SetResult(irp, "Only up to 6 aruments are supported for hexchat::emit_print", TCL_STATIC); return TCL_ERROR;
+    }
+    // Unreachable
+}
+
+
+
 //}
 
 
@@ -643,6 +735,12 @@ static void Tcl_Plugin_Init()
     Tcl_CreateObjCommand(interp, "::hexchat::hook_command", tcl_hook_command, NULL, NULL);
     Tcl_CreateObjCommand(interp, "::hexchat::hook_print", tcl_hook_print, NULL, NULL);
     Tcl_CreateObjCommand(interp, "::hexchat::hook_timer", tcl_hook_timer, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "::hexchat::unregister_hook", tcl_unregister_hook, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "::hexchat::pluginpref_get", tcl_hexchat_pluginpref_get, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "::hexchat::pluginpref_set", tcl_hexchat_pluginpref_set, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "::hexchat::pluginpref_delete", tcl_hexchat_pluginpref_delete, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "::hexchat::pluginpref_list", tcl_hexchat_pluginpref_list, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "::hexchat::emit_print", tcl_hexchat_emit_print, NULL, NULL);
 
     Tcl_InitHashTable(&hooks, TCL_ONE_WORD_KEYS);
 

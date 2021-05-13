@@ -167,7 +167,6 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="hexchat-plugin.h" />
-    <ClInclude Include="printevents.h" />
     <ClInclude Include="tclplugin.h" />
   </ItemGroup>
   <ItemGroup>

@@ -18,9 +18,6 @@
     <ClInclude Include="hexchat-plugin.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="printevents.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="tclplugin.h">
       <Filter>Header Files</Filter>
     </ClInclude>

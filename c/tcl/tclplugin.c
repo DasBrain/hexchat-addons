@@ -15,7 +15,7 @@
  *                                                                         *
  ***************************************************************************/
 
-static char RCSID[] = "$Id: tclplugin.c,v 1.65 2012/07/26 20:02:12 mooooooo Exp $";
+static char RCSID[] = "$Id: tclplugin.c,v 2.0 2021/05/13 20:02:12 dasbrain Exp $";
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,25 +39,111 @@ static char RCSID[] = "$Id: tclplugin.c,v 1.65 2012/07/26 20:02:12 mooooooo Exp 
 #ifdef WIN32
 #include <windows.h>
 #include "win32/typedef.h"
-#define bzero(mem, sz) memset((mem), 0, (sz))
-#define bcopy(src, dest, count) memmove((dest), (src), (count))
 #else
 #include <unistd.h>
 #endif
 
 #include "hexchat-plugin.h"
 #include "tclplugin.h"
-#include "printevents.h"
 
 #ifndef _DEBUG
 static const char init_tcl[] = {
-    ""
+    "package provide hexchat [::hexchat::getinfo version]\n"
+    "\n"
+    "namespace eval ::hexchat {\n"
+    "       namespace export command findcontext getcontext getinfo getlist list_fields nickcmp print prefs setcontext strip hook_command hook_server hook_print hook_timer unregister_hook emit_print\n"
+    "       namespace export pluginpref_get pluginpref_set pluginpref_delete pluginpref_list\n"
+    "\n"
+    "       variable EAT_NONE 0\n"
+    "       variable EAT_HEXCHAT 1\n"
+    "       variable EAT_PLUGIN 2\n"
+    "       variable EAT_ALL 3\n"
+    "\n"
+    "       variable msgprefix \"\\0039Tcl plugin\\003\\t\"\n"
+    "\n"
+    "}\n"
+    "\n"
+    "proc ::hexchat::UplevelError opt {\n"
+    "       variable msgprefix\n"
+    "       set ei [join [lrange [split [dict get $opt -errorinfo] \\n] 0 end-3] \\n]\n"
+    "       ::hexchat::print \"${msgprefix}ERROR: $ei\"\n"
+    "}\n"
+    "\n"
+    "proc ::hexchat::command_tcl {words words_eol} {\n"
+    "       variable msgprefix\n"
+    "       try {\n"
+    "               ::hexchat::print \"${msgprefix}RESULT: [uplevel #0 [lindex $words_eol 2]]\"\n"
+    "       } on error {- opt} {\n"
+    "               UplevelError $opt\n"
+    "       }\n"
+    "       return $::hexchat::EAT_ALL\n"
+    "}\n"
+    "\n"
+    "proc ::hexchat::command_source {words words_eol} {\n"
+    "       if {[lindex $words_eol 2] eq {}} {\n"
+    "               return $::hexchat::EAT_NONE\n"
+    "       }\n"
+    "       set file [lindex $word 2]\n"
+    "       if {[string match *.tcl $file] || [string match *.tm $file]} {\n"
+    "               if {![file exists $file]} {\n"
+    "                       set file [file join [::hexchat::getinfo configdir] addons $file]\n"
+    "               }\n"
+    "               variable msgprefix\n"
+    "               try {\n"
+    "                       uplevel #0 [list source -encoding utf-8 $file]\n"
+    "                       ::hexchat::print \"${msgprefix}Sourced $file\\n\"\n"
+    "               } on error {- opt} {\n"
+    "                       UplevelError $opt\n"
+    "               }\n"
+    "               return $::hexchat::EAT_ALL\n"
+    "       } else {\n"
+    "               return $::hexchat::EAT_NONE\n"
+    "       }\n"
+    "}\n"
+    "\n"
+    "set ::hexchat::command_tcl [::hexchat::hook_command \"tcl\" ::hexchat::command_tcl]\n"
+    "set ::hexchat::command_source [::hexchat::hook_command \"source\" ::hexchat::command_source]\n"
+    "set ::hexchat::command_load [::hexchat::hook_command \"LOAD\" ::hexchat::command_source]\n"
+    "\n"
+    "proc ::bgerror {msg} {\n"
+    "       ::hexchat::print \"${::hexchat::msgprefix}${::errorInfo}\"\n"
+    "}\n"
+    "\n"
+    "namespace eval ::hexchat::util {\n"
+    "       namespace export withctx\n"
+    "}\n"
+    "\n"
+    "proc ::hexchat::util::withctx {ctx script} {\n"
+    "       set oldctx [::hexchat::getcontext]\n"
+    "       ::hexchat::setcontext $ctx\n"
+    "       catch {uplevel 1 $script} res opt\n"
+    "       ::hexchat::setcontext $oldctx\n"
+    "       dict incr opt -level\n"
+    "       return -options $opt $res\n"
+    "}\n"
+    "\n"
+    "apply {{} {\n"
+    "       variable msgprefix\n"
+    "       set files [lsort [glob -nocomplain -directory [::hexchat::getinfo configdir] addons/*.tcl]]\n"
+    "       foreach first {init compat} {\n"
+    "               set idx [lsearch -glob $files */${first}.tcl]\n"
+    "               if {$idx != -1} {\n"
+    "                       set f [lindex $files $idx]\n"
+    "                       set files [lreplace $files $idx $idx]\n"
+    "                       set files [linsert $files 0 $f]\n"
+    "               }\n"
+    "       }\n"
+    "       foreach f $files {\n"
+    "               try {\n"
+    "                       uplevel #0 [list source -encoding utf-8 $f]\n"
+    "                       ::hexchat::print \"${msgprefix}Sourced \\\"$f\\\"\"\n"
+    "               } on error {- opt} {\n"
+    "                       UplevelError $opt\n"
+    "               }\n"
+    "       }\n"
+    "} ::hexchat}\n"
 };
 #endif
-
-static int nexttimerid = 0;
-static int nexttimerindex = 0;
-static timer timers[MAX_TIMERS];
 
 static char VERSION[16];
 
@@ -378,7 +464,7 @@ static int tcl_getinfo(ClientData cd, Tcl_Interp * irp, int argc, Tcl_Obj *const
     return TCL_OK;
 }
 
-static int tcl_getlist_fields(ClientData cd, Tcl_Interp* irp, int argc, Tcl_Obj* const argv[]) {
+static int tcl_list_fields(ClientData cd, Tcl_Interp* irp, int argc, Tcl_Obj* const argv[]) {
     hexchat_list* list = NULL;
     const char* name = NULL;
     const char* const* fields;
@@ -694,17 +780,7 @@ static int tcl_hexchat_emit_print(ClientData cd, Tcl_Interp* irp, int argc, Tcl_
 
 //}
 
-
-static int Command_Reloadall(char *word[], char *word_eol[], void *userdata)
-{
-    Tcl_Plugin_DeInit();
-    Tcl_Plugin_Init();
-
-    hexchat_print(ph, "\0039Tcl plugin\003\tRehashed\n");
-
-    return HEXCHAT_EAT_ALL;
-}
-
+static int Command_Reloadall(char* word[], char* word_eol[], void* userdata);
 static int TCL_Event_Handler(void *userdata)
 {
     Tcl_DoOneEvent(TCL_DONT_WAIT);
@@ -725,7 +801,7 @@ static void Tcl_Plugin_Init()
     Tcl_CreateObjCommand(interp, "::hexchat::getcontext", tcl_getcontext, NULL, NULL);
     Tcl_CreateObjCommand(interp, "::hexchat::getinfo", tcl_getinfo, NULL, NULL);
     Tcl_CreateObjCommand(interp, "::hexchat::getlist", tcl_getlist, NULL, NULL);
-    Tcl_CreateObjCommand(interp, "::hexchat::getList_fields", tcl_getlist_fields, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "::hexchat::list_fields", tcl_list_fields, NULL, NULL);
     Tcl_CreateObjCommand(interp, "::hexchat::nickcmp", tcl_hexchat_nickcmp, NULL, NULL);
     Tcl_CreateObjCommand(interp, "::hexchat::print", tcl_print, NULL, NULL);
     Tcl_CreateObjCommand(interp, "::hexchat::prefs", tcl_prefs, NULL, NULL);
@@ -787,7 +863,7 @@ int hexchat_plugin_init(hexchat_plugin * plugin_handle, char **plugin_name, char
 #ifdef WIN32
     lib = LoadLibraryA(TCL_DLL);
     if (!lib) {
-        hexchat_print(ph, "You must have ActiveTCL 8.5 installed in order to run Tcl scripts.\n" "http://www.activestate.com/activetcl/downloads\n" "Make sure Tcl's bin directory is in your PATH.\n");
+        hexchat_print(ph, "You must have Tcl 8.6 installed in order to run Tcl scripts.\n" "https://www.magicsplat.com/tcl-installer/index.html\n" "Make sure Tcl's bin directory is in your PATH.\n");
         return 0;
     }
     FreeLibrary(lib);
@@ -812,6 +888,15 @@ int hexchat_plugin_init(hexchat_plugin * plugin_handle, char **plugin_name, char
     hexchat_print(ph, "Tcl interface loaded\n");
 
     return 1;                   /* return 1 for success */
+}
+
+static int Command_Reloadall(char* word[], char* word_eol[], void* userdata) {
+    Tcl_Plugin_DeInit();
+    Tcl_Plugin_Init();
+
+    hexchat_print(ph, "\0039Tcl plugin\003\tRehashed\n");
+
+    return HEXCHAT_EAT_ALL;
 }
 
 int hexchat_plugin_deinit()

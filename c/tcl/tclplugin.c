@@ -83,7 +83,7 @@ static const char init_tcl[] = {
     "       if {[lindex $words_eol 2] eq {}} {\n"
     "               return $::hexchat::EAT_NONE\n"
     "       }\n"
-    "       set file [lindex $word 2]\n"
+    "       set file [lindex $words 2]\n"
     "       if {[string match *.tcl $file] || [string match *.tm $file]} {\n"
     "               if {![file exists $file]} {\n"
     "                       set file [file join [::hexchat::getinfo configdir] addons $file]\n"

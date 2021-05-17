@@ -33,7 +33,7 @@ proc ::hexchat::command_source {words words_eol} {
 	if {[lindex $words_eol 2] eq {}} {
 		return $::hexchat::EAT_NONE
 	}
-	set file [lindex $word 2]
+	set file [lindex $words 2]
 	if {[string match *.tcl $file] || [string match *.tm $file]} {
 		if {![file exists $file]} {
 			set file [file join [::hexchat::getinfo configdir] addons $file]
